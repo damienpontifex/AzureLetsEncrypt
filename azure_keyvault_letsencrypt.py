@@ -4,6 +4,7 @@
 # %%
 import os
 import hashlib
+import base64
 from typing import List, Tuple, Optional, Callable, Generator
 
 from OpenSSL import crypto
@@ -125,16 +126,20 @@ class KeyVaultRSAPublicKey(rsa.RSAPublicKey, rsa.RSAPrivateKey):
 
 #%%
 def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
-
-    # %%
     """Follow certificate management flow https://tools.ietf.org/html/rfc8555#section-7"""
 
+    #%%
+    # domains = ['test.damienpontifex.com', 'www.test.damienpontifex.com']
+    # use_prod = False
+    # challenge_handler = dns_challenge_handler
+
+    # %%
     # Get directory
     if use_prod:
-        server = 'https://acme-v02.api.letsencrypt.org/directory'
+        directory_url = 'https://acme-v02.api.letsencrypt.org/directory'
         user_key_name = 'acme'
     else:
-        server = 'https://acme-staging-v02.api.letsencrypt.org/directory'
+        directory_url = 'https://acme-staging-v02.api.letsencrypt.org/directory'
         user_key_name = 'acme-staging'
 
 
@@ -144,13 +149,13 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
 
     #%%
     account_key = josepy.JWKRSA(key=key)
-    net = acme.client.ClientNetwork(account_key)
+    client_network = acme.client.ClientNetwork(account_key)
 
     #%%
-    directory = messages.Directory.from_json(net.get(server).json())
+    directory = messages.Directory.from_json(client_network.get(directory_url).json())
 
     #%%
-    client = acme.client.ClientV2(directory, net)
+    client = acme.client.ClientV2(directory, client_network)
 
     #%%
     new_regr = acme.messages.Registration.from_data(
@@ -166,29 +171,27 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
         regr = client.query_registration(regr)
         print('Got existing account')
 
-    # %%
-    def _get_csr(domains: List[str], pkey_pem: Optional[str]=None) -> Tuple[str, str]:
-        """Get certificate signing request for the given domains using the private key"""
-        if pkey_pem is None:
-            # Create private key
-            pkey = crypto.PKey()
-            pkey.generate_key(crypto.TYPE_RSA, 2048)
-            pkey_pem = crypto.dump_privatekey(crypto.FILETYPE_PEM, pkey)
-        
-        csr_pem = acme.crypto_util.make_csr(pkey_pem, domains)
-        return pkey_pem, csr_pem
+    #%%
+    from azure.keyvault.models import CertificatePolicy, CertificateAttributes, X509CertificateProperties, SubjectAlternativeNames
 
-    # %%
-    # Create domain private key and CSR
-    pkey_pem, csr_pem = _get_csr(domains)
-    # TODO: save pkey_pem in Azure KeyVault or similar so we can call renew
+    kv_cert_name = domains[0].replace('.', '')
 
+    kvclient = KeyVaultClient(keyvault_auth)
+    x509_cert_properties = X509CertificateProperties(subject='', subject_alternative_names=SubjectAlternativeNames(dns_names=domains))
+    cert_policy = CertificatePolicy(x509_certificate_properties=x509_cert_properties)
+    csr = kvclient.create_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, certificate_policy=cert_policy)
+
+    #%%
+    csr_pem = "-----BEGIN CERTIFICATE REQUEST-----\n" + base64.b64encode(csr.csr).decode() + "\n-----END CERTIFICATE REQUEST-----\n"
+
+    #%%
     # Submit order
-    orderr: acme.messages.OrderResource = client.new_order(csr_pem)
+    order_resource = client.new_order(csr_pem)
 
+    #%%
     # Challenges from order
     # Respond to challenges
-    challenges_to_respond_to = list(challenge_handler(orderr.authorizations, account_key))
+    challenges_to_respond_to = list(challenge_handler(order_resource.authorizations, account_key))
 
     #%%
     for dns_challenge in challenges_to_respond_to:
@@ -199,14 +202,14 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
     # Poll for status
     # Finalize order
     # Download certificate
-    final_order = client.poll_and_finalize(orderr)
+    final_order = client.poll_and_finalize(order_resource)
 
     #%%
-    # Write out certificate with name matching primary domain
-    cert_path = os.path.join(os.getcwd(), '{}.pem'.format(domains[0]))
-    with open(cert_path, 'w') as f:
-        f.write(final_order.fullchain_pem)
+    certificate_vals = [val.replace('\n', '').encode() for val in final_order.fullchain_pem.split('-----') 
+                        if 'CERTIFICATE' not in val and len(val.replace('\n', '')) != 0]
 
+    #%%
+    kvclient.merge_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, x509_certificates=certificate_vals)
 
 # %%
 get_cert('test.damienpontifex.com', 'www.test.damienpontifex.com', 
