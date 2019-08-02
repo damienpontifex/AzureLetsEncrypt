@@ -172,7 +172,7 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
         print('Got existing account')
 
     #%%
-    from azure.keyvault.models import CertificatePolicy, CertificateAttributes, X509CertificateProperties, SubjectAlternativeNames
+    from azure.keyvault.models import CertificatePolicy, X509CertificateProperties, SubjectAlternativeNames
 
     kv_cert_name = domains[0].replace('.', '')
 
