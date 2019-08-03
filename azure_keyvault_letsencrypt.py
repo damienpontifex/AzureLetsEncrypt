@@ -5,6 +5,7 @@
 import os
 import hashlib
 import base64
+import logging
 from typing import List, Tuple, Optional, Callable, Generator
 
 from OpenSSL import crypto
@@ -20,6 +21,9 @@ from azure.common.credentials import get_azure_cli_credentials
 from azure.keyvault import KeyVaultClient
 from azure.keyvault.models import KeyVaultErrorException
 
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
+
 ChallengeHandler = Callable[[List[acme.messages.AuthorizationResource], josepy.JWKRSA], Generator[acme.messages.ChallengeResource, None, None]]
 
 KEYVAULT_URL = os.environ.get('KEYVAULT_URL', 'https://pontivault.vault.azure.net/')
@@ -28,6 +32,8 @@ DNS_ZONE_NAME = os.environ.get('DNS_ZONE_NAME', 'damienpontifex.com')
 REGISTRATION_EMAIL = os.environ.get('REGISTRATION_EMAIL', 'damien.pontifex@gmail.com')
 
 def dns_challenge_handler(authorizations: List[acme.messages.AuthorizationResource], account_key: josepy.JWKRSA) -> Generator[acme.messages.ChallengeResource, None, None]:
+    """Extract DNS challenges and ensure they're created in Azure DNS"""
+
     def _get_dns_challenge(authzr: acme.messages.AuthorizationResource) -> Tuple[acme.challenges.DNS01, str]:
         """Find DNS challenge from authorization challenge options"""
         challenge = next(c for c in authzr.body.challenges if type(c.chall) == acme.challenges.DNS01)
@@ -43,8 +49,7 @@ def dns_challenge_handler(authorizations: List[acme.messages.AuthorizationResour
     from azure.mgmt.dns import DnsManagementClient
 
     def _create_dns_records(txt_record_name, txt_record_value, auth, subscription_id):
-        """Create the DNS records to respond to challenge
-        """
+        """Create the DNS records to respond to challenge"""
 
         dns_client = DnsManagementClient(auth, subscription_id)
         
@@ -68,10 +73,12 @@ def dns_challenge_handler(authorizations: List[acme.messages.AuthorizationResour
         _create_dns_records(record_set_name, record_set_value, dns_auth, subscription_id)
 
         yield dns_challenge
-    
+
 
 #%%
 class KeyVaultRSAPublicKey(rsa.RSAPublicKey, rsa.RSAPrivateKey):
+    """Azure KeyVault provider for public and private account key"""
+
     def __init__(self, vault_url, key_name, auth):
         self.vault_url = vault_url
         self.key_name = key_name
@@ -142,7 +149,6 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
         directory_url = 'https://acme-staging-v02.api.letsencrypt.org/directory'
         user_key_name = 'acme-staging'
 
-
     # %%
     keyvault_auth, subscription_id = get_azure_cli_credentials(resource='https://vault.azure.net')
     key = KeyVaultRSAPublicKey(KEYVAULT_URL, user_key_name, keyvault_auth)
@@ -165,11 +171,11 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
     # Register or fetch account
     try:
         regr = client.new_account(new_regr)
-        print('Created new account')
+        log.info('Created new account')
     except acme.errors.ConflictError as e:
         regr = acme.messages.RegistrationResource(uri=e.location, body=new_regr)
         regr = client.query_registration(regr)
-        print('Got existing account')
+        log.info('Got existing account')
 
     #%%
     from azure.keyvault.models import CertificatePolicy, X509CertificateProperties, SubjectAlternativeNames
@@ -179,14 +185,17 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
     kvclient = KeyVaultClient(keyvault_auth)
     x509_cert_properties = X509CertificateProperties(subject='', subject_alternative_names=SubjectAlternativeNames(dns_names=domains))
     cert_policy = CertificatePolicy(x509_certificate_properties=x509_cert_properties)
-    csr = kvclient.create_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, certificate_policy=cert_policy)
+    cert_op = kvclient.create_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, certificate_policy=cert_policy)
+
+    log.info('Created certificate request in key vault')
 
     #%%
-    csr_pem = "-----BEGIN CERTIFICATE REQUEST-----\n" + base64.b64encode(csr.csr).decode() + "\n-----END CERTIFICATE REQUEST-----\n"
+    csr_pem = "-----BEGIN CERTIFICATE REQUEST-----\n" + base64.b64encode(cert_op.csr).decode() + "\n-----END CERTIFICATE REQUEST-----\n"
 
     #%%
     # Submit order
     order_resource = client.new_order(csr_pem)
+    log.info('Submitted order')
 
     #%%
     # Challenges from order
@@ -198,11 +207,15 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
         # Perform challenge
         auth_response = client.answer_challenge(dns_challenge, dns_challenge.chall.response(account_key))
 
+    log.info('Answered challenges')
+
     #%%
     # Poll for status
     # Finalize order
     # Download certificate
     final_order = client.poll_and_finalize(order_resource)
+
+    log.info('Finalised order')
 
     #%%
     certificate_vals = [val.replace('\n', '').encode() for val in final_order.fullchain_pem.split('-----') 
@@ -210,6 +223,8 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
 
     #%%
     kvclient.merge_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, x509_certificates=certificate_vals)
+
+    log.info('Merged certificate back to key vault')
 
 # %%
 get_cert('test.damienpontifex.com', 'www.test.damienpontifex.com', 
