@@ -6,6 +6,7 @@ import os
 import hashlib
 import base64
 import logging
+import datetime
 from typing import List, Tuple, Optional, Callable, Generator
 
 from OpenSSL import crypto
@@ -145,9 +146,11 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
     if use_prod:
         directory_url = 'https://acme-v02.api.letsencrypt.org/directory'
         user_key_name = 'acme'
+        issuance_period_months = 3
     else:
         directory_url = 'https://acme-staging-v02.api.letsencrypt.org/directory'
         user_key_name = 'acme-staging'
+        issuance_period_months = 1
 
     # %%
     keyvault_auth, subscription_id = get_azure_cli_credentials(resource='https://vault.azure.net')
@@ -178,12 +181,12 @@ def get_cert(*domains, use_prod=False, challenge_handler: ChallengeHandler):
         log.info('Got existing account')
 
     #%%
-    from azure.keyvault.models import CertificatePolicy, X509CertificateProperties, SubjectAlternativeNames
+    from azure.keyvault.models import CertificatePolicy, CertificateAttributes, X509CertificateProperties, SubjectAlternativeNames
 
     kv_cert_name = domains[0].replace('.', '')
 
     kvclient = KeyVaultClient(keyvault_auth)
-    x509_cert_properties = X509CertificateProperties(subject='', subject_alternative_names=SubjectAlternativeNames(dns_names=domains))
+    x509_cert_properties = X509CertificateProperties(subject='', subject_alternative_names=SubjectAlternativeNames(dns_names=domains), validity_in_months=issuance_period_months)
     cert_policy = CertificatePolicy(x509_certificate_properties=x509_cert_properties)
     cert_op = kvclient.create_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, certificate_policy=cert_policy)
 
