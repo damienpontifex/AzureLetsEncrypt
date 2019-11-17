@@ -1,1 +1,6 @@
 azure-functions
+azure-mgmt-dns
+acme
+azure-keyvault-certificates
+azure-keyvault-keys
+azure-identity
