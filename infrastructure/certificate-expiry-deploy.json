@@ -1,0 +1,39 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "keyVaultName": {
+            "type": "string"
+        },
+        "functionAppName": {
+            "type": "string"
+        },
+        "keyVaultResourceGroup": {
+            "type": "string"
+        }
+    },
+    "variables": {
+        "certExpirySubscriptionName": "CertExpiry2"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.KeyVault/vaults/providers/eventSubscriptions",
+            "name": "[concat(parameters('keyVaultName'), '/Microsoft.EventGrid/', variables('certExpirySubscriptionName'))]",
+            "apiVersion": "2019-02-01-preview",
+            "properties": {
+                "destination": {
+                    "endpointType": null,
+                    "properties": {
+                        "resourceId": "[resourceId('Microsoft.Web/sites/functions', parameters('functionAppName'), 'CertExpiryEventTrigger')]"
+                    }
+                },
+                "filter": {
+                    "includedEventTypes": [
+                        "Microsoft.KeyVault.CertificateNearExpiry",
+                        "Microsoft.KeyVault.CertificateExpired"
+                    ]
+                }
+            }
+        }
+    ]
+}
