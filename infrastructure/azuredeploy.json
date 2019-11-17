@@ -16,6 +16,14 @@
       "metadata": {
         "description": "Environment description used with naming resources"
       }
+    },
+    "dnsZoneName": {
+      "type": "string",
+      "defaultValue": "damienpontifex.com"
+    },
+    "dnsZoneResourceGroup": {
+      "type": "string",
+      "defaultValue": "damienpontifex.com-rg"
     }
   },
   "variables": {
@@ -66,11 +74,12 @@
             "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
           ],
           "properties": {
-            "AzureWebJobsDashboard": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountResourceId'),'2015-05-01-preview').key1)]",
-            "AzureWebJobsStorage": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountResourceId'),'2015-05-01-preview').key1)]",
+            "AzureWebJobsDashboard": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountResourceId'),'2019-04-01').keys[0].value)]",
+            "AzureWebJobsStorage": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountResourceId'),'2019-04-01').keys[0].value)]",
             "FUNCTIONS_EXTENSION_VERSION": "~2",
             "APPINSIGHTS_INSTRUMENTATIONKEY": "[reference(resourceId('Microsoft.Insights/components/', variables('appInsightsName')), '2015-05-01').InstrumentationKey]",
-            "FUNCTIONS_WORKER_RUNTIME": "python"
+            "FUNCTIONS_WORKER_RUNTIME": "python",
+            "KEYVAULT_URL": "[concat('https://', variables('keyVaultName'), '.vault.azure.net')]"
           }
         }
       ]
@@ -107,6 +116,34 @@
           }
         ]
       }
+    },
+    {
+      "comments": "DNS Zone Contributor for function app managed identity",
+      "apiVersion": "2018-05-01",
+      "name": "nestedTemplate",
+      "type": "Microsoft.Resources/deployments",
+      "resourceGroup": "[parameters('dnsZoneResourceGroup')]",
+      "properties": {
+        "mode": "Incremental",
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "resources": [
+            {
+              "apiVersion": "2018-09-01-preview",
+              "type": "Microsoft.Network/dnszones/providers/roleAssignments",
+              "name": "[concat(parameters('dnsZoneName'), '/Microsoft.Authorization/', guid(uniqueString(variables('functionAppName'))))]",
+              "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', 'befefa01-2a29-4197-83a8-272ff33ce314')]",
+                "principalId": "[reference(variables('functionAppId'), '2019-08-01', 'Full').identity.principalId]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ]
     }
   ],
   "outputs": {
