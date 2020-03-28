@@ -1,6 +1,6 @@
 azure-functions
 azure-mgmt-dns
-acme
-azure-keyvault-certificates
-azure-keyvault-keys
-azure-identity
+acme>=1.3.0
+azure-keyvault-certificates>=4.1.0
+azure-keyvault-keys>=4.1.0
+azure-identity>=1.4.0b1

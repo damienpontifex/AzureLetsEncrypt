@@ -9,23 +9,21 @@ import josepy
 from acme import messages, client
 import acme
 
-from .key_vault_rsa_key import KeyVaultRSAKey
-from .azure_dns import dns_challenge_handler
+from key_vault_rsa_key import KeyVaultRSAKey
+from azure_dns import dns_challenge_handler
 
-from azure.identity import DefaultAzureCredential, InteractiveBrowserCredential
-from azure.keyvault.certificates import CertificateClient, CertificatePolicy, KeyType, SecretContentType
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.certificates import CertificateClient, CertificatePolicy, KeyType, CertificateContentType
+from azure.core.exceptions import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-KEYVAULT_URL = os.environ.get('KEYVAULT_URL', 'https://pontivault.vault.azure.net/')
-DNS_ZONE_RESOURCE_GROUP = os.environ.get('DNS_ZONE_RESOURCE_GROUP', 'damienpontifex.com-rg')
-DNS_ZONE_NAME = os.environ.get('DNS_ZONE_NAME', 'damienpontifex.com')
-REGISTRATION_EMAIL = os.environ.get('REGISTRATION_EMAIL', 'damien.pontifex@gmail.com')
 
-challenge_handler = functools.partial(dns_challenge_handler, dns_zone_resource_group=DNS_ZONE_RESOURCE_GROUP, dns_zone_name=DNS_ZONE_NAME)
+def create_or_update_cert(kv_cert_name, *domains, use_prod=False, keyvault_url='https://ponti-certs-kvjwxwal2p6n.vault.azure.net/', dns_zone_resource_group='damienpontifex.com-rg', dns_zone_name='damienpontifex.com', registration_email='damien.pontifex@gmail.com'):
 
-def create_or_update_cert(kv_cert_name, *domains, use_prod=False):
+    challenge_handler = functools.partial(dns_challenge_handler, dns_zone_resource_group=dns_zone_resource_group, dns_zone_name=dns_zone_name)
+
 
     # Get directory
     if use_prod:
@@ -39,10 +37,10 @@ def create_or_update_cert(kv_cert_name, *domains, use_prod=False):
 
     credential = DefaultAzureCredential()
 
-    cert_client = CertificateClient(vault_url=KEYVAULT_URL, credential=credential)
+    cert_client = CertificateClient(vault_url=keyvault_url, credential=credential)
 
-    #%% 
-    key = KeyVaultRSAKey(credential, KEYVAULT_URL, user_key_name)
+    #%%
+    key = KeyVaultRSAKey(credential, keyvault_url, user_key_name)
 
     account_key = josepy.JWKRSA(key=key)
     client_network = acme.client.ClientNetwork(account_key)
@@ -52,7 +50,7 @@ def create_or_update_cert(kv_cert_name, *domains, use_prod=False):
     client = acme.client.ClientV2(directory, client_network)
 
     new_regr = acme.messages.Registration.from_data(
-        key=account_key, email=REGISTRATION_EMAIL, terms_of_service_agreed=True)
+        key=account_key, email=registration_email, terms_of_service_agreed=True)
 
     # Register or fetch account
     try:
@@ -69,12 +67,19 @@ def create_or_update_cert(kv_cert_name, *domains, use_prod=False):
         exportable=True,
         key_type=KeyType.rsa,
         key_size=2048,
-        content_type=SecretContentType.PKCS12,
+        content_type=CertificateContentType.pkcs12,
         san_dns_names=domains[1:] if len(domains) > 1 else [],
         validity_in_months=issuance_period_months
     )
 
-    cert_op = cert_client.begin_create_certificate(name=kv_cert_name, policy=cert_policy)
+    try:
+        # Check an existing certificate operation isn't in progress
+        cert_op = cert_client.get_certificate_operation(certificate_name=kv_cert_name)
+        logger.info('Existing cert operation in progress')
+    except ResourceNotFoundError:
+        cert_op = cert_client.begin_create_certificate(certificate_name=kv_cert_name, policy=cert_policy)
+        logger.info('New cert operation')
+
     # cert_op = kvclient.create_certificate(KEYVAULT_URL, certificate_name=kv_cert_name, certificate_policy=cert_policy)
     cert_op_res = cert_op.result()
     cert_op_r = cert_client.get_certificate_operation(kv_cert_name)
@@ -109,7 +114,7 @@ def create_or_update_cert(kv_cert_name, *domains, use_prod=False):
     # with open('cert.pem', 'w') as f:
     #     f.write(final_order.fullchain_pem)
 
-    certificate_vals = [val.replace('\n', '').encode() for val in final_order.fullchain_pem.split('-----') 
+    certificate_vals = [val.replace('\n', '').encode() for val in final_order.fullchain_pem.split('-----')
                         if 'CERTIFICATE' not in val and len(val.replace('\n', '')) != 0]
 
     cert_client.merge_certificate(name=kv_cert_name, x509_certificates=certificate_vals)
@@ -117,6 +122,6 @@ def create_or_update_cert(kv_cert_name, *domains, use_prod=False):
     logger.info('Merged certificate back to key vault')
 
 if __name__ == '__main__':
-    from .certs import certs
+    from certs import certs
     for cert_name, domains in certs.items():
         create_or_update_cert(cert_name, *domains, use_prod=False)
