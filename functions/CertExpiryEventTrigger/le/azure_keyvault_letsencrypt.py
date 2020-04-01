@@ -20,10 +20,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def create_or_update_cert(kv_cert_name, *domains, use_prod=False, keyvault_url='https://ponti-certs-kvjwxwal2p6n.vault.azure.net/', dns_zone_resource_group='damienpontifex.com-rg', dns_zone_name='damienpontifex.com', registration_email='damien.pontifex@gmail.com'):
-
-    challenge_handler = functools.partial(dns_challenge_handler, dns_zone_resource_group=dns_zone_resource_group, dns_zone_name=dns_zone_name)
-
+def create_or_update_cert(kv_cert_name, *domains, use_prod=False, keyvault_url='https://ponti-certs-kvjwxwal2p6n.vault.azure.net/', dns_zone_resource_group='damienpontifex.com-rg', dns_zone_name='damienpontifex.com', registration_email='damien.pontifex@gmail.com', dns_subscription_id="fa2cbf67-1293-4f9c-8884-a0379a9e0c64"):
 
     # Get directory
     if use_prod:
@@ -36,6 +33,8 @@ def create_or_update_cert(kv_cert_name, *domains, use_prod=False, keyvault_url='
         issuance_period_months = 1
 
     credential = DefaultAzureCredential()
+
+    challenge_handler = functools.partial(dns_challenge_handler, credential=credential, subscription_id=dns_subscription_id, dns_zone_resource_group=dns_zone_resource_group, dns_zone_name=dns_zone_name)
 
     cert_client = CertificateClient(vault_url=keyvault_url, credential=credential)
 
